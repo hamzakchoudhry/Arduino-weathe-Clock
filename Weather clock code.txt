@@ -1,0 +1,170 @@
+
+#include <Wire.h>
+#include <RTClib.h>
+#include <DHT.h>
+#include <hd44780.h>
+#include <hd44780ioClass/hd44780_I2Cexp.h>
+
+#define DHTPIN 2
+#define DHTTYPE DHT22
+
+RTC_DS3231 rtc;
+DHT dht(DHTPIN, DHTTYPE);
+hd44780_I2Cexp lcd;
+
+unsigned long lastClockUpdate = 0;
+unsigned long lastSensorUpdate = 0;
+
+bool firstClockUpdate = true;
+bool firstSensorUpdate = true;
+
+void clearLine(byte row) {
+  lcd.setCursor(0, row);
+  lcd.print(F("                    "));
+  lcd.setCursor(0, row);
+}
+
+void printTwoDigits(int number) {
+  if (number < 10) {
+    lcd.print('0');
+  }
+  lcd.print(number);
+}
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // Initialize 20x4 LCD
+  int status = lcd.begin(20, 4);
+
+  if (status != 0) {
+    Serial.print(F("LCD error: "));
+    Serial.println(status);
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  lcd.backlight();
+  lcd.print(F("Weather Clock"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("Starting..."));
+
+  // Initialize DS3231
+  if (!rtc.begin()) {
+    Serial.println(F("RTC not detected!"));
+    lcd.clear();
+    lcd.print(F("RTC not detected!"));
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  // Do not reset your previously set RTC time
+  if (rtc.lostPower()) {
+    Serial.println(F("Warning: Check RTC time"));
+  }
+
+  // Initialize DHT22
+  dht.begin();
+
+  delay(1000);
+  lcd.clear();
+
+  Serial.println(F("Weather Clock Ready!"));
+}
+
+
+void loop() {
+
+  // Set RTC date and time through Serial Monitor
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+
+    int day, month, year, hour, minute, second;
+
+    if (sscanf(input.c_str(), "%d/%d/%d %d:%d:%d",
+               &day, &month, &year,
+               &hour, &minute, &second) == 6) {
+
+      DateTime newTime(year, month, day,
+                       hour, minute, second);
+
+      if (newTime.isValid()) {
+        rtc.adjust(newTime);
+        Serial.println("RTC time updated!");
+      } else {
+        Serial.println("Invalid date or time!");
+      }
+    }
+  }
+
+  unsigned long currentMillis = millis();
+
+
+  // Update date and time every second
+  if (firstClockUpdate ||
+      currentMillis - lastClockUpdate >= 1000) {
+
+    firstClockUpdate = false;
+    lastClockUpdate = currentMillis;
+
+    DateTime now = rtc.now();
+
+    clearLine(0);
+    lcd.print(F("Date: "));
+    printTwoDigits(now.day());
+    lcd.print('/');
+    printTwoDigits(now.month());
+    lcd.print('/');
+    lcd.print(now.year());
+
+    clearLine(1);
+    lcd.print(F("Time: "));
+    printTwoDigits(now.hour());
+    lcd.print(':');
+    printTwoDigits(now.minute());
+    lcd.print(':');
+    printTwoDigits(now.second());
+  }
+
+  // Update temperature and humidity every 2 seconds
+  if (firstSensorUpdate ||
+      currentMillis - lastSensorUpdate >= 2000) {
+
+    firstSensorUpdate = false;
+    lastSensorUpdate = currentMillis;
+
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+
+    if (isnan(temperature) || isnan(humidity)) {
+      clearLine(2);
+      lcd.print(F("DHT22 read error"));
+
+      clearLine(3);
+      lcd.print(F("Check sensor wiring"));
+
+      Serial.println(F("DHT22 read failed!"));
+    }
+    else {
+      clearLine(2);
+      lcd.print(F("Temp: "));
+      lcd.print(temperature, 1);
+      lcd.print(F(" C"));
+
+      clearLine(3);
+      lcd.print(F("Humidity: "));
+      lcd.print(humidity, 1);
+      lcd.print(F(" %"));
+
+      Serial.print(F("Temperature: "));
+      Serial.print(temperature, 1);
+      Serial.print(F(" C | Humidity: "));
+      Serial.print(humidity, 1);
+      Serial.println(F(" %"));
+    }
+  }
+}
